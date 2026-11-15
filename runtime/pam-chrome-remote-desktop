@@ -1,0 +1,8 @@
+#%PAM-1.0
+# Rootless container PAM configuration for Chrome Remote Desktop inside Bubblewrap.
+# Remote connections are already authenticated by Google OAuth + SPAKE2 Curve25519 PIN
+# and execute strictly as the already-logged-in user (no privilege elevation).
+auth      required  pam_permit.so
+account   required  pam_permit.so
+password  required  pam_permit.so
+session   required  pam_permit.so

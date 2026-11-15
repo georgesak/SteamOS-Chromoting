@@ -31,6 +31,7 @@ cmd_install() {
 
     if [[ -d "$REPO_ROOT/runtime" ]]; then
         cp -f "$REPO_ROOT/runtime/"*.sh "$INSTALL_DIR/runtime/"
+        [[ -f "$REPO_ROOT/runtime/pam-chrome-remote-desktop" ]] && cp -f "$REPO_ROOT/runtime/pam-chrome-remote-desktop" "$INSTALL_DIR/runtime/"
         chmod +x "$INSTALL_DIR/runtime/"*.sh
         cp -f "$REPO_ROOT/runtime/systemd/"* "$SYSTEMD_USER_DIR/"
     fi

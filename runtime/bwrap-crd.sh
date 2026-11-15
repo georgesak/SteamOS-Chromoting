@@ -34,6 +34,30 @@ if [[ -d /opt/google ]]; then
     done
 fi
 
+PAM_CRD_FILE="$INSTALL_DIR/runtime/pam-chrome-remote-desktop"
+if [[ ! -f "$PAM_CRD_FILE" ]]; then
+    mkdir -p "$INSTALL_DIR/runtime"
+    cat > "$PAM_CRD_FILE" <<'EOF'
+#%PAM-1.0
+auth      required  pam_permit.so
+account   required  pam_permit.so
+password  required  pam_permit.so
+session   required  pam_permit.so
+EOF
+fi
+
+# Overlay /etc/pam.d/chrome-remote-desktop inside the rootless container so PAM account check
+# doesn't fall back to SteamOS's /etc/pam.d/other (pam_deny.so).
+if [[ -d /etc/pam.d ]]; then
+    BWRAP_ARGS+=(--tmpfs /etc/pam.d)
+    for pentry in /etc/pam.d/*; do
+        if [[ -e "$pentry" && "$(basename "$pentry")" != "chrome-remote-desktop" ]]; then
+            BWRAP_ARGS+=(--ro-bind "$pentry" "$pentry")
+        fi
+    done
+    BWRAP_ARGS+=(--ro-bind "$PAM_CRD_FILE" /etc/pam.d/chrome-remote-desktop)
+fi
+
 BWRAP_ARGS+=(
     --bind "$CRD_OPT" /opt/google/chrome-remote-desktop
     --ro-bind "$INSTALL_DIR/runtime/crd-controller-shim.sh" /opt/google/chrome-remote-desktop/chrome-remote-desktop
