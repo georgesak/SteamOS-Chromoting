@@ -68,6 +68,7 @@ pub struct XvfbPresenter {
     vp_y: i32,
     vp_w: u32,
     vp_h: u32,
+    last_splash: Option<(String, String)>,
 }
 
 impl XvfbPresenter {
@@ -166,6 +167,7 @@ impl XvfbPresenter {
             vp_y: 0,
             vp_w: width,
             vp_h: height,
+            last_splash: None,
         })
     }
 
@@ -191,6 +193,9 @@ impl XvfbPresenter {
         self.vp_y = 0;
         self.vp_w = new_w;
         self.vp_h = new_h;
+        if let Some((title, sub)) = self.last_splash.clone() {
+            let _ = self.present_splash(&title, &sub);
+        }
         self.conn.flush()?;
         Ok(())
     }
@@ -307,11 +312,13 @@ impl XvfbPresenter {
             }
         }
 
+        self.last_splash = None;
         self.blit_shm()?;
         Ok(())
     }
 
     pub fn present_splash(&mut self, title: &str, subtitle: &str) -> Result<()> {
+        self.last_splash = Some((title.to_string(), subtitle.to_string()));
         let w = self.width as usize;
         let h = self.height as usize;
         let dst = self.shm.as_slice_mut();

@@ -63,30 +63,31 @@ fn proc_real_uid(proc_path: &Path) -> Option<u32> {
 }
 
 fn discover_user_xauthority(my_uid: u32) -> Option<String> {
-    // Check XAUTHORITY in /run/user/<uid>/xauth_* (SDDM KDE Plasma X11 standard path on Arch/SteamOS)
+    let mut best: Option<(std::time::SystemTime, String)> = None;
     let run_dir = format!("/run/user/{my_uid}");
-    if let Ok(entries) = fs::read_dir(&run_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let s = name.to_string_lossy();
-            if s.starts_with("xauth_") {
-                return Some(entry.path().to_string_lossy().into_owned());
-            }
-        }
-    }
-    // Check /tmp/xauth_* owned by current user
-    if let Ok(entries) = fs::read_dir("/tmp") {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let s = name.to_string_lossy();
-            if s.starts_with("xauth_") {
+    for dir in [run_dir.as_str(), "/tmp"] {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let s = name.to_string_lossy();
+                if !s.starts_with("xauth_") {
+                    continue;
+                }
                 if let Ok(m) = entry.metadata() {
-                    if m.uid() == my_uid {
-                        return Some(entry.path().to_string_lossy().into_owned());
+                    if m.uid() != my_uid {
+                        continue;
+                    }
+                    let mtime = m.modified().unwrap_or(std::time::UNIX_EPOCH);
+                    let path_str = entry.path().to_string_lossy().into_owned();
+                    if best.as_ref().map_or(true, |(t, _)| mtime > *t) {
+                        best = Some((mtime, path_str));
                     }
                 }
             }
         }
+    }
+    if let Some((_, p)) = best {
+        return Some(p);
     }
     if let Some(home) = std::env::var_os("HOME") {
         let fallback = Path::new(&home).join(".Xauthority");

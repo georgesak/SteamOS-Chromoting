@@ -22,6 +22,8 @@ Commands:
   restart                 Restart SteamOS-Chromoting services
   status                  Show service, display, session, and registration status
   logs [unit]             Follow logs (all units or xvfb|audio|bridge|host)
+  desktop                 Switch SteamOS to Desktop Mode
+  gamemode                Switch SteamOS back to Gaming Mode (Gamescope)
   uninstall               Stop services and remove runtime files
 EOF
 }
@@ -180,13 +182,16 @@ case "$COMMAND" in
     restart)   systemctl --user restart steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-host.service; systemctl --user restart steamos-crd-bridge.service 2>/dev/null || true ;;
     status)    cmd_status ;;
     logs)      cmd_logs "$@" ;;
+    desktop)
+        steamosctl switch-to-desktop-mode
+        ;;
+    gamemode)
+        steamosctl switch-to-game-mode
+        ;;
     uninstall)
         systemctl --user disable --now steamos-crd.target steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-bridge.service steamos-crd-host.service 2>/dev/null || true
         rm -f "$SYSTEMD_USER_DIR"/steamos-crd*
-        # Enable systemd user linger (rootless via polkit) so Xvfb & CRD survive Gaming <-> Desktop switches
-    loginctl enable-linger "$USER" 2>/dev/null || true
-
-    systemctl --user daemon-reload
+        systemctl --user daemon-reload
         rm -rf "$INSTALL_DIR" "$HOME/bin/steamos-crd"
         [[ -w "$HOME/.local/bin" ]] && rm -f "$HOME/.local/bin/steamos-crd" || true
         echo "[steamos-crd] Uninstalled runtime (kept ~/.config/chrome-remote-desktop credentials)."

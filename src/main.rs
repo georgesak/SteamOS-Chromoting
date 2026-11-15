@@ -7,9 +7,10 @@ mod input_uinput;
 mod session_detector;
 mod xvfb_presenter;
 
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -30,6 +31,7 @@ enum ActiveCapture {
     None,
     GamingPipeWire(PipeWireCaptureHandle),
     DesktopX11(X11CaptureHandle),
+    DesktopWaylandPending(JoinHandle<Result<PortalScreenCastSession>>),
     DesktopWayland {
         _portal: PortalScreenCastSession,
         pw: PipeWireCaptureHandle,
@@ -42,6 +44,7 @@ impl ActiveCapture {
             ActiveCapture::None => false,
             ActiveCapture::GamingPipeWire(h) => !h.is_finished(),
             ActiveCapture::DesktopX11(h) => !h.is_finished(),
+            ActiveCapture::DesktopWaylandPending(_) => true,
             ActiveCapture::DesktopWayland { pw, .. } => !pw.is_finished(),
         }
     }
@@ -64,9 +67,11 @@ fn start_capture_for_mode(
     mode: &SessionMode,
     frame_slot: &Arc<LatestFrameSlot>,
     active_client_flag: &Arc<AtomicBool>,
+    presenter: &mut XvfbPresenter,
 ) -> ActiveCapture {
     match mode {
         SessionMode::GamingMode => {
+            std::env::remove_var("XAUTHORITY");
             set_gamescope_composite_force(true);
             ActiveCapture::GamingPipeWire(PipeWireCaptureHandle::spawn_target_object(
                 "gamescope",
@@ -87,31 +92,16 @@ fn start_capture_for_mode(
         }
         SessionMode::DesktopWayland { dbus_addr } => {
             set_gamescope_composite_force(false);
-            match PortalScreenCastSession::negotiate(dbus_addr.as_deref()) {
-                Ok(portal) => {
-                    // Split fields before moving pipewire_fd into capture thread while keeping `_portal` alive
-                    let node_id = portal.node_id;
-                    let dup_fd = unsafe { libc::fcntl(portal.pipewire_fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
-                    if dup_fd < 0 {
-                        error!("Failed to dup portal PipeWire fd");
-                        return ActiveCapture::None;
-                    }
-                    let owned_dup = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup_fd) };
-                    let pw = PipeWireCaptureHandle::spawn_portal_node(
-                        owned_dup,
-                        node_id,
-                        Arc::clone(frame_slot),
-                    );
-                    ActiveCapture::DesktopWayland {
-                        _portal: portal,
-                        pw,
-                    }
-                }
-                Err(e) => {
-                    warn!("Desktop Wayland portal ScreenCast unavailable yet: {e:#}");
-                    ActiveCapture::None
-                }
-            }
+            let _ = presenter.present_splash(
+                "KDE WAYLAND PORTAL APPROVAL NEEDED",
+                "CLICK SHARE ON SCREEN OR USE DESKTOP X11",
+            );
+            let dbus_owned = dbus_addr.clone();
+            let handle = thread::Builder::new()
+                .name("portal-negotiate".to_string())
+                .spawn(move || PortalScreenCastSession::negotiate(dbus_owned.as_deref()))
+                .expect("spawn portal-negotiate thread");
+            ActiveCapture::DesktopWaylandPending(handle)
         }
         SessionMode::Transitioning => {
             set_gamescope_composite_force(false);
@@ -119,8 +109,6 @@ fn start_capture_for_mode(
         }
     }
 }
-
-use std::os::fd::{AsRawFd, FromRawFd};
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -200,6 +188,45 @@ fn main() -> Result<()> {
 
             let active_mode = current_mode.as_ref().unwrap();
 
+            // Check if an async Wayland portal negotiation finished
+            if let ActiveCapture::DesktopWaylandPending(ref h) = capture {
+                if h.is_finished() {
+                    let prev = std::mem::replace(&mut capture, ActiveCapture::None);
+                    if let ActiveCapture::DesktopWaylandPending(join_h) = prev {
+                        match join_h.join() {
+                            Ok(Ok(portal)) => {
+                                let node_id = portal.node_id;
+                                let dup_fd = unsafe {
+                                    libc::fcntl(portal.pipewire_fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0)
+                                };
+                                if dup_fd >= 0 {
+                                    let owned_dup = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup_fd) };
+                                    let pw = PipeWireCaptureHandle::spawn_portal_node(
+                                        owned_dup,
+                                        node_id,
+                                        Arc::clone(&frame_slot),
+                                    );
+                                    capture = ActiveCapture::DesktopWayland {
+                                        _portal: portal,
+                                        pw,
+                                    };
+                                } else {
+                                    error!("Failed to dup portal PipeWire fd");
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                warn!("Desktop Wayland portal ScreenCast unavailable yet: {e:#}");
+                                last_capture_retry = now;
+                            }
+                            Err(_) => {
+                                error!("Desktop Wayland portal negotiation thread panicked");
+                                last_capture_retry = now;
+                            }
+                        }
+                    }
+                }
+            }
+
             if !client_connected {
                 if was_connected || capture.is_running() {
                     info!("No active CRD client connected; pausing capture for 0% idle overhead");
@@ -219,7 +246,12 @@ fn main() -> Result<()> {
                     && now.duration_since(last_capture_retry) >= Duration::from_secs(1)
                 {
                     last_capture_retry = now;
-                    capture = start_capture_for_mode(active_mode, &frame_slot, &active_client_flag);
+                    capture = start_capture_for_mode(
+                        active_mode,
+                        &frame_slot,
+                        &active_client_flag,
+                        &mut presenter,
+                    );
                 }
             }
         }
