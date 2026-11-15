@@ -1,0 +1,17 @@
+[Unit]
+Description=SteamOS CRD Session Capture & uinput Bridge
+PartOf=steamos-crd.target
+Requires=steamos-crd-xvfb.service
+After=steamos-crd-xvfb.service
+ConditionPathExists=%h/.local/share/steamos-chromoting/bin/steamos-crd-bridge
+
+[Service]
+Type=simple
+Environment=STEAMOS_CRD_DISPLAY=:20
+Environment=RUST_LOG=info
+ExecStart=%h/.local/share/steamos-chromoting/bin/steamos-crd-bridge
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=steamos-crd.target

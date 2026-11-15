@@ -1,0 +1,6 @@
+[Unit]
+Description=SteamOS Chrome Remote Desktop Stack
+Documentation=https://github.com/Georges/SteamOS-Chromoting
+
+[Install]
+WantedBy=default.target

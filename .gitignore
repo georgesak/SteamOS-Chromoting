@@ -1,0 +1,6 @@
+/target/
+/dist/
+*.tar.gz
+*.deb
+.DS_Store
+Thumbs.db

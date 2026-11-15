@@ -1,0 +1,13 @@
+[Unit]
+Description=SteamOS CRD Persistent Virtual Display (Xvfb)
+PartOf=steamos-crd.target
+Before=steamos-crd-host.service steamos-crd-bridge.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/steamos-chromoting/runtime/xvfb-runner.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=steamos-crd.target

@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+INSTALL_DIR="${STEAMOS_CRD_DIR:-$HOME/.local/share/steamos-chromoting}"
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+CONFIG_DIR="$HOME/.config/chrome-remote-desktop"
+
+usage() {
+    cat <<'EOF'
+Usage: steamos-crd <command> [options]
+
+Commands:
+  install                 Install/update rootless CRD runtime & systemd user services
+  setup [options]         Register host with Google Chrome Remote Desktop
+                            --code="4/0A..."   OAuth code from https://remotedesktop.google.com/headless
+                            --pin=123456       6+ digit PIN (optional; prompts interactively if omitted)
+                            --name=<hostname>  Display name in Chrome Remote Desktop
+  start                   Start SteamOS-Chromoting services
+  stop                    Stop SteamOS-Chromoting services
+  restart                 Restart SteamOS-Chromoting services
+  status                  Show service, display, session, and registration status
+  logs [unit]             Follow logs (all units or xvfb|audio|bridge|host)
+  uninstall               Stop services and remove runtime files
+EOF
+}
+
+cmd_install() {
+    mkdir -p "$INSTALL_DIR/runtime" "$INSTALL_DIR/bin" "$HOME/.local/bin" "$SYSTEMD_USER_DIR"
+
+    if [[ -d "$REPO_ROOT/runtime" ]]; then
+        cp -f "$REPO_ROOT/runtime/"*.sh "$INSTALL_DIR/runtime/"
+        chmod +x "$INSTALL_DIR/runtime/"*.sh
+        cp -f "$REPO_ROOT/runtime/systemd/"* "$SYSTEMD_USER_DIR/"
+    fi
+
+    if [[ -x "$REPO_ROOT/dist/steamos-crd-bridge" ]]; then
+        cp -f "$REPO_ROOT/dist/steamos-crd-bridge" "$INSTALL_DIR/bin/steamos-crd-bridge"
+        chmod +x "$INSTALL_DIR/bin/steamos-crd-bridge"
+    elif [[ -x "$REPO_ROOT/target/release/steamos-crd-bridge" ]]; then
+        cp -f "$REPO_ROOT/target/release/steamos-crd-bridge" "$INSTALL_DIR/bin/steamos-crd-bridge"
+        chmod +x "$INSTALL_DIR/bin/steamos-crd-bridge"
+    fi
+
+    cp -f "${BASH_SOURCE[0]}" "$INSTALL_DIR/bin/steamos-crd"
+    chmod +x "$INSTALL_DIR/bin/steamos-crd"
+    if [[ -w "$HOME/.local/bin" ]]; then
+        ln -sf "$INSTALL_DIR/bin/steamos-crd" "$HOME/.local/bin/steamos-crd"
+    else
+        mkdir -p "$HOME/bin"
+        ln -sf "$INSTALL_DIR/bin/steamos-crd" "$HOME/bin/steamos-crd"
+    fi
+    if [[ -f "$HOME/.bashrc" ]] && ! grep -q 'steamos-chromoting/bin' "$HOME/.bashrc" 2>/dev/null; then
+        printf '\nexport PATH="$HOME/.local/share/steamos-chromoting/bin:$PATH"\n' >> "$HOME/.bashrc"
+    fi
+
+    "$INSTALL_DIR/runtime/fetch-crd.sh"
+
+    # Enable systemd user linger (rootless via polkit) so Xvfb & CRD survive Gaming <-> Desktop switches
+    loginctl enable-linger "$USER" 2>/dev/null || true
+
+    systemctl --user daemon-reload
+    systemctl --user enable \
+        steamos-crd.target \
+        steamos-crd-xvfb.service \
+        steamos-crd-audio.service \
+        steamos-crd-bridge.service \
+        steamos-crd-host.service >/dev/null
+
+    echo ""
+    echo "[steamos-crd] Installation complete!"
+    echo "Next step: Authorize at https://remotedesktop.google.com/headless and run:"
+    echo "  steamos-crd setup --code=\"<AUTH_CODE>\" --pin=\"<6_DIGIT_PIN>\""
+}
+
+cmd_setup() {
+    local code=""
+    local pin=""
+    local host_name
+    host_name="$(hostname)"
+    local redirect_url="https://remotedesktop.google.com/_/oauthredirect"
+
+    for arg in "$@"; do
+        case "$arg" in
+            --code=*)
+                code="${arg#--code=}"
+                ;;
+            --pin=*)
+                pin="${arg#--pin=}"
+                ;;
+            --name=*)
+                host_name="${arg#--name=}"
+                ;;
+            --redirect-url=*)
+                redirect_url="${arg#--redirect-url=}"
+                ;;
+            DISPLAY=*|/opt/google/chrome-remote-desktop/start-host)
+                # Ignore pasted prefix tokens from Google's headless snippet
+                ;;
+        esac
+    done
+
+    if [[ -z "$code" ]]; then
+        echo "ERROR: Missing --code=\"...\" from https://remotedesktop.google.com/headless" >&2
+        exit 1
+    fi
+
+    mkdir -p "$CONFIG_DIR"
+    chmod 0700 "$CONFIG_DIR"
+
+    START_ARGS=(
+        /opt/google/chrome-remote-desktop/start-host
+        "--code=$code"
+        "--redirect-url=$redirect_url"
+        "--name=$host_name"
+    )
+    if [[ -n "$pin" ]]; then
+        START_ARGS+=("--pin=$pin")
+    fi
+
+    echo "[steamos-crd] Registering '$host_name' with Chrome Remote Desktop..."
+    DISPLAY="" "$INSTALL_DIR/runtime/bwrap-crd.sh" "${START_ARGS[@]}"
+
+    # Enable systemd user linger (rootless via polkit) so Xvfb & CRD survive Gaming <-> Desktop switches
+    loginctl enable-linger "$USER" 2>/dev/null || true
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now steamos-crd.target
+    systemctl --user restart steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-host.service
+    if [[ -x "$INSTALL_DIR/bin/steamos-crd-bridge" ]]; then
+        systemctl --user restart steamos-crd-bridge.service
+    fi
+    echo "[steamos-crd] Host registered and running! Open https://remotedesktop.google.com/access to connect."
+}
+
+cmd_status() {
+    echo "=== SteamOS-Chromoting Status ==="
+    local cfg
+    cfg="$(find "$CONFIG_DIR" -maxdepth 1 -name 'host#*.json' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$cfg" ]]; then
+        echo "Host Config : $cfg (registered)"
+    else
+        echo "Host Config : NOT REGISTERED (run 'steamos-crd setup')"
+    fi
+    echo "Bridge Bin  : $( [[ -x "$INSTALL_DIR/bin/steamos-crd-bridge" ]] && echo "installed" || echo "not built yet" )"
+    echo "uinput ACL  : $( [[ -w /dev/uinput ]] && echo "writable (OK)" || echo "NOT writable" )"
+    echo ""
+    systemctl --user status --no-pager \
+        steamos-crd-xvfb.service \
+        steamos-crd-audio.service \
+        steamos-crd-bridge.service \
+        steamos-crd-host.service || true
+}
+
+cmd_logs() {
+    local sub="${1:-all}"
+    case "$sub" in
+        xvfb|audio|bridge|host)
+            journalctl --user -u "steamos-crd-${sub}.service" -f
+            ;;
+        *)
+            journalctl --user -u "steamos-crd-*.service" -f
+            ;;
+    esac
+}
+
+COMMAND="${1:-}"
+shift || true
+
+case "$COMMAND" in
+    install)   cmd_install "$@" ;;
+    setup)     cmd_setup "$@" ;;
+    start)     systemctl --user start steamos-crd.target ;;
+    stop)      systemctl --user stop steamos-crd.target ;;
+    restart)   systemctl --user restart steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-host.service; systemctl --user restart steamos-crd-bridge.service 2>/dev/null || true ;;
+    status)    cmd_status ;;
+    logs)      cmd_logs "$@" ;;
+    uninstall)
+        systemctl --user disable --now steamos-crd.target steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-bridge.service steamos-crd-host.service 2>/dev/null || true
+        rm -f "$SYSTEMD_USER_DIR"/steamos-crd*
+        # Enable systemd user linger (rootless via polkit) so Xvfb & CRD survive Gaming <-> Desktop switches
+    loginctl enable-linger "$USER" 2>/dev/null || true
+
+    systemctl --user daemon-reload
+        rm -rf "$INSTALL_DIR" "$HOME/bin/steamos-crd"
+        [[ -w "$HOME/.local/bin" ]] && rm -f "$HOME/.local/bin/steamos-crd" || true
+        echo "[steamos-crd] Uninstalled runtime (kept ~/.config/chrome-remote-desktop credentials)."
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac

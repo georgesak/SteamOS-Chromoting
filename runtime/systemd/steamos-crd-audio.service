@@ -1,0 +1,13 @@
+[Unit]
+Description=SteamOS CRD Audio Monitor Pipe Feeder
+PartOf=steamos-crd.target
+Before=steamos-crd-host.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/steamos-chromoting/runtime/audio-feeder.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=steamos-crd.target
