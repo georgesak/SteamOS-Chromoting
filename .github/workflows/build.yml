@@ -33,7 +33,7 @@ jobs:
         run: |
           mkdir -p dist
           cp target/release/steamos-crd-bridge dist/steamos-crd-bridge
-          ./scripts/package-release.sh
+          bash ./scripts/package-release.sh
 
       - name: Upload release tarball artifact
         uses: actions/upload-artifact@v4
