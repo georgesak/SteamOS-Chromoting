@@ -234,6 +234,7 @@ impl XvfbPresenter {
                     let _ = self.conn.flush();
                 }
                 Event::ConfigureNotify(c) if c.window == self.root => {
+                    had_input = true;
                     self.resize_surface(c.width as u32, c.height as u32)?;
                 }
                 _ => {}

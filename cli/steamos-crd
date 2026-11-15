@@ -78,7 +78,7 @@ cmd_setup() {
     local code=""
     local pin=""
     local host_name
-    host_name="$(hostname)"
+    host_name="$(uname -n)"
     local redirect_url="https://remotedesktop.google.com/_/oauthredirect"
 
     for arg in "$@"; do
@@ -90,7 +90,10 @@ cmd_setup() {
                 pin="${arg#--pin=}"
                 ;;
             --name=*)
-                host_name="${arg#--name=}"
+                local parsed_name="${arg#--name=}"
+                if [[ -n "$parsed_name" && "$parsed_name" != '$(hostname)' ]]; then
+                    host_name="$parsed_name"
+                fi
                 ;;
             --redirect-url=*)
                 redirect_url="${arg#--redirect-url=}"

@@ -179,6 +179,10 @@ pub fn is_crd_client_connected() -> bool {
     }
 
     let my_uid = unsafe { libc::getuid() };
+    if Path::new(&format!("/run/user/{my_uid}/steamos-crd/force_active")).exists() {
+        return true;
+    }
+
     let Ok(entries) = fs::read_dir("/proc") else {
         return true;
     };
@@ -208,9 +212,6 @@ pub fn is_crd_client_connected() -> bool {
             for fd in fds.flatten() {
                 if let Ok(target) = fs::read_link(fd.path()) {
                     let t_str = target.to_string_lossy();
-                    if t_str.contains("audio.fifo") {
-                        return true;
-                    }
                     if let Some(rest) = t_str.strip_prefix("socket:[") {
                         if let Some(inode_str) = rest.strip_suffix(']') {
                             if let Ok(inode) = inode_str.parse::<u64>() {

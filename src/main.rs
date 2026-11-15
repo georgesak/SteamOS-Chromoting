@@ -207,12 +207,20 @@ fn main() -> Result<()> {
                     set_gamescope_composite_force(false);
                     let _ = presenter.present_splash("STEAMOS CHROMOTING", "IDLE - PAUSED UNTIL CLIENT CONNECTS");
                 }
-            } else if !capture.is_running()
-                && !matches!(active_mode, SessionMode::Transitioning)
-                && now.duration_since(last_capture_retry) >= Duration::from_secs(1)
-            {
-                last_capture_retry = now;
-                capture = start_capture_for_mode(active_mode, &frame_slot, &active_client_flag);
+            } else {
+                if !was_connected {
+                    info!(
+                        "CRD client active; starting capture for '{}'",
+                        active_mode.label()
+                    );
+                }
+                if !capture.is_running()
+                    && !matches!(active_mode, SessionMode::Transitioning)
+                    && now.duration_since(last_capture_retry) >= Duration::from_secs(1)
+                {
+                    last_capture_retry = now;
+                    capture = start_capture_for_mode(active_mode, &frame_slot, &active_client_flag);
+                }
             }
         }
 

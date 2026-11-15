@@ -7,7 +7,7 @@ CONFIG_DIR="$HOME/.config/chrome-remote-desktop"
 mkdir -p "$CONFIG_DIR"
 chmod 0700 "$CONFIG_DIR"
 
-HOST_HASH="$(hostname | md5sum | awk '{print $1}')"
+HOST_HASH="$(printf '%s' "$(uname -n)" | md5sum | awk '{print $1}')"
 DEFAULT_CONFIG="$CONFIG_DIR/host#${HOST_HASH}.json"
 
 find_config() {
@@ -72,7 +72,7 @@ case "$ACTION" in
         # If stdin is piped (some start-host versions pipe JSON on --start), capture it if non-empty
         if [[ ! -t 0 ]]; then
             TMP_IN="$(mktemp)"
-            cat > "$TMP_IN" || true
+            cat > "$TMP_IN" 2>/dev/null || true
             if [[ -s "$TMP_IN" ]]; then
                 TARGET_CFG="${CONFIG_PATH:-$DEFAULT_CONFIG}"
                 umask 0077

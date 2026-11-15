@@ -14,6 +14,13 @@ trap cleanup EXIT
 echo "[steamos-crd] Preparing install directory at: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/opt/google" "$INSTALL_DIR/sysroot/bin" "$INSTALL_DIR/sysroot/lib" "$INSTALL_DIR/bin"
 
+# SteamOS omits `inetutils` (`hostname`); provide a lightweight shim inside sysroot/bin
+cat > "$INSTALL_DIR/sysroot/bin/hostname" <<'EOF'
+#!/usr/bin/env sh
+exec uname -n
+EOF
+chmod +x "$INSTALL_DIR/sysroot/bin/hostname"
+
 if [[ "${STEAMOS_CRD_FORCE_FETCH:-0}" == "1" || ( ! -x "$CRD_OPT/chrome-remote-desktop-host" && ! -x "$CRD_OPT/remoting_me2me_host" ) ]]; then
     echo "[steamos-crd] Downloading official Chrome Remote Desktop (.deb)..."
     curl -fL --retry 3 -o "$TMP_DIR/crd.deb" "$CRD_DEB_URL"
