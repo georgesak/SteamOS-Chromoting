@@ -111,12 +111,8 @@ fn run_x11_capture(
     stop: &AtomicBool,
     active_client: &AtomicBool,
 ) -> Result<()> {
-    if let Some(auth) = xauthority {
-        std::env::set_var("XAUTHORITY", auth);
-    }
-
-    let (conn, screen_num) = RustConnection::connect(Some(disp))
-        .with_context(|| format!("Failed to connect to Desktop X11 display {disp}"))?;
+    let (conn, screen_num) = crate::session_detector::connect_x11_display(disp, xauthority)
+        .ok_or_else(|| anyhow::anyhow!("Failed to connect to Desktop X11 display {disp}"))?;
 
     shm::query_version(&conn)?.reply().context("MIT-SHM not supported on X11 display")?;
     let has_xfixes = xfixes::query_version(&conn, 5, 0)

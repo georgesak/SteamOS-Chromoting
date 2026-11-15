@@ -71,7 +71,6 @@ fn start_capture_for_mode(
 ) -> ActiveCapture {
     match mode {
         SessionMode::GamingMode => {
-            std::env::remove_var("XAUTHORITY");
             set_gamescope_composite_force(true);
             ActiveCapture::GamingPipeWire(PipeWireCaptureHandle::spawn_target_object(
                 "gamescope",
@@ -139,7 +138,6 @@ fn main() -> Result<()> {
     let mut last_presented_seq: u64 = 0;
 
     let mut last_probe = Instant::now() - Duration::from_secs(10);
-    let mut last_clip_poll = Instant::now();
     let mut last_input_at = Instant::now() - Duration::from_secs(300);
     let mut last_capture_retry = Instant::now() - Duration::from_secs(10);
 
@@ -147,21 +145,17 @@ fn main() -> Result<()> {
         let now = Instant::now();
         let in_gaming_mode = matches!(current_mode, Some(SessionMode::GamingMode));
 
-        // 1. Drain X11 input events on Xvfb -> /dev/uinput
-        if presenter.pump_events(&mut uinput, in_gaming_mode)? {
+        // 1. Service XFixes selection notifications & SelectionRequest events rapidly
+        if let Some(ref mut clip) = clipboard {
+            clip.pump();
+        }
+
+        // 2. Drain X11 input events on Xvfb -> /dev/uinput (with pre-paste clipboard sync)
+        if presenter.pump_events(&mut uinput, clipboard.as_mut(), in_gaming_mode)? {
             last_input_at = now;
         }
 
-        // 2. Service clipboard requests rapidly
-        if let Some(ref mut clip) = clipboard {
-            clip.pump_requests();
-            if now.duration_since(last_clip_poll) >= Duration::from_millis(750) {
-                last_clip_poll = now;
-                clip.poll_changes();
-            }
-        }
-
-        // 3. Probe session mode & remote client state every 500ms
+        // 3. Probe session mode, clipboard endpoints & remote client state every 500ms
         if now.duration_since(last_probe) >= Duration::from_millis(500) {
             last_probe = now;
 
@@ -184,6 +178,13 @@ fn main() -> Result<()> {
                 capture = ActiveCapture::None;
                 let _ = presenter.present_splash("STEAMOS CHROMOTING", detected_mode.label());
                 current_mode = Some(detected_mode);
+            }
+
+            if clipboard.is_none() {
+                clipboard = ClipboardBridge::new(&xvfb_display);
+            }
+            if let Some(ref mut clip) = clipboard {
+                clip.maintenance(current_mode.as_ref());
             }
 
             let active_mode = current_mode.as_ref().unwrap();

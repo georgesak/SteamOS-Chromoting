@@ -1,11 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::net::UnixStream;
 use std::path::Path;
+use std::time::SystemTime;
 
 use tracing::debug;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
+use x11rb::rust_connection::{DefaultStream, RustConnection};
 use x11rb::wrapper::ConnectionExt as _;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,40 +65,218 @@ fn proc_real_uid(proc_path: &Path) -> Option<u32> {
     None
 }
 
-fn discover_user_xauthority(my_uid: u32) -> Option<String> {
-    let mut best: Option<(std::time::SystemTime, String)> = None;
+fn discover_xauth_candidates(my_uid: u32, disp_num: &str, explicit: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push_unique = |p: String| {
+        if !p.is_empty() && !out.contains(&p) {
+            out.push(p);
+        }
+    };
+
+    if let Some(exp) = explicit {
+        push_unique(exp.to_string());
+    }
+
+    // Check running Xorg / Xwayland command lines for `-auth <file>` matching this display
+    if let Ok(entries) = fs::read_dir("/proc") {
+        let disp_arg = format!(":{disp_num}");
+        for entry in entries.flatten() {
+            let fname = entry.file_name();
+            let Some(pid_str) = fname.to_str() else { continue };
+            if pid_str.parse::<u32>().is_err() {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(comm) = fs::read_to_string(path.join("comm")) else { continue };
+            let comm = comm.trim();
+            if !matches!(comm, "Xwayland" | "Xorg" | "X") {
+                continue;
+            }
+            let Ok(cmdline) = fs::read(path.join("cmdline")) else { continue };
+            let args: Vec<&str> = cmdline
+                .split(|&b| b == 0)
+                .filter(|s| !s.is_empty())
+                .filter_map(|s| std::str::from_utf8(s).ok())
+                .collect();
+            let matches_disp = args.iter().any(|&a| a == disp_arg);
+            if matches_disp {
+                for win in args.windows(2) {
+                    if win[0] == "-auth" {
+                        push_unique(win[1].to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect user-owned xauth_* files in /run/user/<uid> and /tmp ordered newest first
+    let mut timed: Vec<(SystemTime, String)> = Vec::new();
     let run_dir = format!("/run/user/{my_uid}");
     for dir in [run_dir.as_str(), "/tmp"] {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let s = name.to_string_lossy();
-                if !s.starts_with("xauth_") {
+                if !s.starts_with("xauth_") && !s.starts_with(".xauth") {
                     continue;
                 }
                 if let Ok(m) = entry.metadata() {
                     if m.uid() != my_uid {
                         continue;
                     }
-                    let mtime = m.modified().unwrap_or(std::time::UNIX_EPOCH);
-                    let path_str = entry.path().to_string_lossy().into_owned();
-                    if best.as_ref().map_or(true, |(t, _)| mtime > *t) {
-                        best = Some((mtime, path_str));
-                    }
+                    let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                    timed.push((mtime, entry.path().to_string_lossy().into_owned()));
                 }
             }
         }
     }
-    if let Some((_, p)) = best {
-        return Some(p);
+    timed.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, p) in timed {
+        push_unique(p);
     }
+
     if let Some(home) = std::env::var_os("HOME") {
         let fallback = Path::new(&home).join(".Xauthority");
         if fallback.exists() {
-            return Some(fallback.to_string_lossy().into_owned());
+            push_unique(fallback.to_string_lossy().into_owned());
         }
     }
-    None
+
+    out
+}
+
+fn discover_user_xauthority(my_uid: u32) -> Option<String> {
+    discover_xauth_candidates(my_uid, "0", None).into_iter().next()
+}
+
+fn read_u16_be(buf: &[u8], pos: &mut usize) -> Option<u16> {
+    if *pos + 2 > buf.len() {
+        return None;
+    }
+    let val = u16::from_be_bytes([buf[*pos], buf[*pos + 1]]);
+    *pos += 2;
+    Some(val)
+}
+
+fn read_xauth_field<'a>(buf: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
+    let len = read_u16_be(buf, pos)? as usize;
+    if *pos + len > buf.len() {
+        return None;
+    }
+    let slice = &buf[*pos..*pos + len];
+    *pos += len;
+    Some(slice)
+}
+
+/// Parses an `.Xauthority` binary file (libXau format) and returns `(auth_name, auth_data)` pairs
+/// matching `disp_num` (exact display match prioritized before wildcard entries).
+fn parse_xauth_cookies(path: &Path, disp_num: &str) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let Ok(bytes) = fs::read(path) else {
+        return Vec::new();
+    };
+    let mut pos = 0;
+    let mut exact = Vec::new();
+    let mut wildcard = Vec::new();
+
+    while pos < bytes.len() {
+        let Some(family) = read_u16_be(&bytes, &mut pos) else { break };
+        let Some(_addr) = read_xauth_field(&bytes, &mut pos) else { break };
+        let Some(num) = read_xauth_field(&bytes, &mut pos) else { break };
+        let Some(name) = read_xauth_field(&bytes, &mut pos) else { break };
+        let Some(data) = read_xauth_field(&bytes, &mut pos) else { break };
+
+        // FamilyLocal (256), FamilyWild (65535, used by KWin Xwayland), or Internet/LocalHost (0)
+        if (family == 256 || family == 65535 || family == 0) && !name.is_empty() && !data.is_empty() {
+            if num == disp_num.as_bytes() {
+                exact.push((name.to_vec(), data.to_vec()));
+            } else if num.is_empty() {
+                wildcard.push((name.to_vec(), data.to_vec()));
+            }
+        }
+    }
+
+    exact.extend(wildcard);
+    exact
+}
+
+/// Connects to an X11 display without mutating process-global `$XAUTHORITY`, automatically
+/// authenticating with SDDM / KWin Xwayland cookies when required and falling back to unauthenticated
+/// connections for Gamescope and Xvfb.
+pub fn connect_x11_display(
+    display: &str,
+    explicit_xauth: Option<&str>,
+) -> Option<(RustConnection, usize)> {
+    let trimmed = display.trim_start_matches(':');
+    let (disp_num, screen_str) = trimmed.split_once('.').unwrap_or((trimmed, "0"));
+    let screen_num: usize = screen_str.parse().unwrap_or(0);
+    let sock_path = format!("/tmp/.X11-unix/X{disp_num}");
+
+    let my_uid = unsafe { libc::getuid() };
+    let candidate_files = discover_xauth_candidates(my_uid, disp_num, explicit_xauth);
+
+    let mut cookies: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    for file in &candidate_files {
+        for pair in parse_xauth_cookies(Path::new(file), disp_num) {
+            if !cookies.contains(&pair) {
+                cookies.push(pair);
+            }
+        }
+    }
+
+    for (auth_name, auth_data) in cookies {
+        if let Ok(unix) = UnixStream::connect(&sock_path) {
+            if let Ok((stream, _)) = DefaultStream::from_unix_stream(unix) {
+                if let Ok(conn) = RustConnection::connect_to_stream_with_auth_info(
+                    stream,
+                    screen_num,
+                    auth_name,
+                    auth_data,
+                ) {
+                    return Some((conn, screen_num));
+                }
+            }
+        }
+    }
+
+    if let Ok(unix) = UnixStream::connect(&sock_path) {
+        if let Ok((stream, _)) = DefaultStream::from_unix_stream(unix) {
+            if let Ok(conn) = RustConnection::connect_to_stream(stream, screen_num) {
+                return Some((conn, screen_num));
+            }
+        }
+    }
+
+    RustConnection::connect(Some(display)).ok()
+}
+
+/// Discovers all active X11 display sockets in `/tmp/.X11-unix` other than our persistent Xvfb
+/// display (e.g., both `:0` Steam GamepadUI and `:1` active game/app Xwayland in Gaming Mode,
+/// or `:0`/`:1` in Desktop Mode).
+pub fn discover_session_x11_displays(xvfb_display: &str) -> Vec<String> {
+    let xvfb_num = xvfb_display
+        .trim_start_matches(':')
+        .split('.')
+        .next()
+        .unwrap_or("20");
+
+    let mut nums: Vec<u32> = Vec::new();
+    if let Ok(entries) = fs::read_dir("/tmp/.X11-unix") {
+        for entry in entries.flatten() {
+            let fname = entry.file_name();
+            let Some(s) = fname.to_str() else { continue };
+            let Some(num_str) = s.strip_prefix('X') else { continue };
+            if num_str == xvfb_num {
+                continue;
+            }
+            if let Ok(n) = num_str.parse::<u32>() {
+                nums.push(n);
+            }
+        }
+    }
+
+    nums.sort_unstable();
+    nums.dedup();
+    nums.into_iter().map(|n| format!(":{n}")).collect()
 }
 
 pub fn detect_active_session() -> SessionMode {
@@ -252,7 +433,7 @@ fn collect_udp_socket_inodes() -> HashSet<u64> {
 /// are merged into Gamescope's PipeWire stream while a remote client is connected, and restores
 /// hardware plane bypass (`0`) when disconnected.
 pub fn set_gamescope_composite_force(enable: bool) {
-    let Ok((conn, screen_num)) = x11rb::connect(Some(":0")) else {
+    let Some((conn, screen_num)) = connect_x11_display(":0", None) else {
         return;
     };
     let root = conn.setup().roots[screen_num].root;
@@ -263,14 +444,12 @@ pub fn set_gamescope_composite_force(enable: bool) {
         return;
     };
     let val: u32 = if enable { 1 } else { 0 };
-    let _ = conn.change_property(
+    let _ = conn.change_property32(
         PropMode::REPLACE,
         root,
         atom_reply.atom,
         AtomEnum::CARDINAL,
-        32,
-        1,
-        &val.to_ne_bytes(),
+        &[val],
     );
     let _ = conn.sync();
 }

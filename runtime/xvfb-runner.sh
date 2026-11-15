@@ -38,4 +38,5 @@ exec "$XVFB_BIN" "$CRD_DISPLAY" \
     +extension DAMAGE \
     +extension MIT-SHM \
     +extension XTEST \
+    +extension XFIXES \
     "${EXTRA_XKB_ARGS[@]}"

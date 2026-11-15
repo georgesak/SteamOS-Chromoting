@@ -10,6 +10,7 @@ PKG_ROOT="$STAGE_DIR/steamos-chromoting"
 mkdir -p "$PKG_ROOT/dist" "$PKG_ROOT/runtime/systemd" "$PKG_ROOT/cli"
 
 cp -f "$REPO_ROOT/README.md" "$PKG_ROOT/"
+[[ -f "$REPO_ROOT/LICENSE" ]] && cp -f "$REPO_ROOT/LICENSE" "$PKG_ROOT/"
 cp -f "$REPO_ROOT/cli/steamos-crd" "$PKG_ROOT/cli/"
 cp -f "$REPO_ROOT/runtime/"*.sh "$PKG_ROOT/runtime/"
 [[ -f "$REPO_ROOT/runtime/pam-chrome-remote-desktop" ]] && cp -f "$REPO_ROOT/runtime/pam-chrome-remote-desktop" "$PKG_ROOT/runtime/"

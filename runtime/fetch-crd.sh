@@ -95,7 +95,7 @@ if [[ "$NEED_SYSROOT" -eq 1 ]]; then
                         *) cp -Ln "$lib" /out/lib/ || true ;;
                     esac
                 done
-                for extra in /usr/lib/libXss.so* /usr/lib/libXtst.so* /usr/lib/libXdamage.so* /usr/lib/libXrandr.so*; do
+                for extra in /usr/lib/libXss.so* /usr/lib/libXtst.so* /usr/lib/libXdamage.so* /usr/lib/libXrandr.so* /usr/lib/libXfixes.so*; do
                     [[ -e "$extra" ]] && cp -Ln "$extra" /out/lib/ || true
                 done
             '

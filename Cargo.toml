@@ -1,6 +1,6 @@
 [package]
 name = "steamos-crd-bridge"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Session-aware video capture (Gamescope PipeWire / Plasma X11 & Wayland) and uinput bridge for Chrome Remote Desktop on SteamOS"
 license = "MIT"

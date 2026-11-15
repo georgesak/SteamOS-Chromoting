@@ -10,6 +10,7 @@ use x11rb::protocol::xproto::{
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
+use crate::clipboard::ClipboardBridge;
 use crate::frame::FrameBuffer;
 use crate::input_uinput::UinputInjector;
 
@@ -202,7 +203,12 @@ impl XvfbPresenter {
 
     /// Drains pending X11 events from Xvfb and forwards pointer/keyboard events to `/dev/uinput`.
     /// Returns `true` if any input activity occurred.
-    pub fn pump_events(&mut self, uinput: &mut UinputInjector, in_gaming_mode: bool) -> Result<bool> {
+    pub fn pump_events(
+        &mut self,
+        uinput: &mut UinputInjector,
+        mut clipboard: Option<&mut ClipboardBridge>,
+        in_gaming_mode: bool,
+    ) -> Result<bool> {
         let mut had_input = false;
 
         while let Some(ev) = self.conn.poll_for_event()? {
@@ -214,6 +220,11 @@ impl XvfbPresenter {
                 }
                 Event::ButtonPress(b) => {
                     had_input = true;
+                    if b.detail == 2 {
+                        if let Some(ref mut clip) = clipboard {
+                            clip.sync_before_paste();
+                        }
+                    }
                     let (nx, ny) = self.normalize_coords(b.event_x as i32, b.event_y as i32);
                     uinput.move_pointer_normalized(nx, ny);
                     uinput.handle_x11_button(b.detail, true);
@@ -224,11 +235,16 @@ impl XvfbPresenter {
                 }
                 Event::KeyPress(k) => {
                     had_input = true;
-                    uinput.handle_x11_key(k.detail, true, in_gaming_mode);
+                    if uinput.is_paste_key_press(k.detail) {
+                        if let Some(ref mut clip) = clipboard {
+                            clip.sync_before_paste();
+                        }
+                    }
+                    uinput.handle_x11_key(k.detail, u16::from(k.state), true, in_gaming_mode);
                 }
                 Event::KeyRelease(k) => {
                     had_input = true;
-                    uinput.handle_x11_key(k.detail, false, in_gaming_mode);
+                    uinput.handle_x11_key(k.detail, u16::from(k.state), false, in_gaming_mode);
                 }
                 Event::FocusOut(_) => {
                     let _ = self.conn.set_input_focus(

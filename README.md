@@ -10,6 +10,7 @@ A rootless, SteamOS-update-persistent **Chrome Remote Desktop** host that works 
   - **Gaming Mode**: Captures Gamescope's native PipeWire stream (`media.name = "gamescope"`) with zero portal prompts.
   - **Desktop Mode**: Captures Plasma X11 via `XShm`/`XDamage` and Plasma Wayland via `xdg-desktop-portal` ScreenCast (`restore_token` cached).
   - **Input**: Translates X11 events into kernel `/dev/uinput` (unprivileged via SteamOS `uaccess` rules) for mouse, keyboard, and **STEAM** / **QAM (`...`)** hardware button chords.
+  - **Clipboard**: Bidirectional UTF-8 clipboard sync across Gamescope Xwayland displays (`:0` & `:1`), KDE Plasma X11, and KDE Plasma Wayland (`org.kde.klipper`).
   - **Audio**: Streams `@DEFAULT_MONITOR@` (`48kHz s16le`) across both modes without muting or hijacking Steam Deck speakers.
 - **100% Rootless & Update-Resilient**: Everything lives under `~/.local/share/steamos-chromoting` and `~/.config/systemd/user/` — untouched by SteamOS A/B rootfs updates.
 
@@ -32,3 +33,7 @@ A rootless, SteamOS-update-persistent **Chrome Remote Desktop** host that works 
 | :--- | :--- |
 | `Ctrl + Alt + S` | Press **STEAM** button (opens Steam menu / overlay) |
 | `Ctrl + Alt + Q` | Press **Quick Access Menu (`...`)** button |
+
+## License
+
+Released under the [MIT License](LICENSE).

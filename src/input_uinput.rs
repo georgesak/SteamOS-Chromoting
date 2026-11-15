@@ -15,6 +15,9 @@ pub struct UinputInjector {
     ctrl_r: bool,
     alt_l: bool,
     alt_r: bool,
+    shift_l: bool,
+    shift_r: bool,
+    synth_shift_key: Option<u16>,
 }
 
 impl UinputInjector {
@@ -73,6 +76,9 @@ impl UinputInjector {
             ctrl_r: false,
             alt_l: false,
             alt_r: false,
+            shift_l: false,
+            shift_r: false,
+            synth_shift_key: None,
         })
     }
 
@@ -111,26 +117,65 @@ impl UinputInjector {
         let _ = self.pointer.emit(&[ev]);
     }
 
-    /// Translates X11 keycode (evdev + 8) and intercepts Gaming Mode hardware chords:
+    /// Returns `true` if `x11_keycode` pressed with current modifiers is a paste shortcut
+    /// (`Ctrl+V`, `Shift+Insert`, or dedicated `KEY_PASTE`).
+    pub fn is_paste_key_press(&self, x11_keycode: u8) -> bool {
+        if x11_keycode < 9 {
+            return false;
+        }
+        let key = Key::new((x11_keycode - 8) as u16);
+        let ctrl_held = self.ctrl_l || self.ctrl_r;
+        let shift_held = self.shift_l || self.shift_r;
+        let alt_held = self.alt_l || self.alt_r;
+        (key == Key::KEY_V && ctrl_held && !alt_held)
+            || (key == Key::KEY_INSERT && shift_held && !alt_held)
+            || key == Key::KEY_PASTE
+    }
+
+    /// Translates X11 keycode (evdev + 8), preserves XKB latched `Shift` from Chrome Remote
+    /// Desktop's `X11CharacterInjector` (mobile text input / "Send keystrokes"), and intercepts
+    /// Gaming Mode hardware chords:
     /// - `Ctrl + Alt + S` -> STEAM button
     /// - `Ctrl + Alt + Q` -> Quick Access Menu (`...`)
-    pub fn handle_x11_key(&mut self, x11_keycode: u8, pressed: bool, in_gaming_mode: bool) {
+    pub fn handle_x11_key(
+        &mut self,
+        x11_keycode: u8,
+        x11_state: u16,
+        pressed: bool,
+        in_gaming_mode: bool,
+    ) {
         if x11_keycode < 9 {
             return;
         }
         let evdev_code = (x11_keycode - 8) as u16;
         let key = Key::new(evdev_code);
 
+        let is_modifier = matches!(
+            key,
+            Key::KEY_LEFTCTRL
+                | Key::KEY_RIGHTCTRL
+                | Key::KEY_LEFTALT
+                | Key::KEY_RIGHTALT
+                | Key::KEY_LEFTSHIFT
+                | Key::KEY_RIGHTSHIFT
+                | Key::KEY_LEFTMETA
+                | Key::KEY_RIGHTMETA
+                | Key::KEY_CAPSLOCK
+        );
+
         match key {
             Key::KEY_LEFTCTRL => self.ctrl_l = pressed,
             Key::KEY_RIGHTCTRL => self.ctrl_r = pressed,
             Key::KEY_LEFTALT => self.alt_l = pressed,
             Key::KEY_RIGHTALT => self.alt_r = pressed,
+            Key::KEY_LEFTSHIFT => self.shift_l = pressed,
+            Key::KEY_RIGHTSHIFT => self.shift_r = pressed,
             _ => {}
         }
 
         let ctrl_held = self.ctrl_l || self.ctrl_r;
         let alt_held = self.alt_l || self.alt_r;
+        let shift_held = self.shift_l || self.shift_r;
 
         if in_gaming_mode && pressed && ctrl_held && alt_held {
             if key == Key::KEY_S {
@@ -146,12 +191,43 @@ impl UinputInjector {
             }
         }
 
-        let ev = InputEvent::new(EventType::KEY, evdev_code, if pressed { 1 } else { 0 });
-        let _ = self.keyboard.emit(&[ev]);
+        if pressed {
+            // `X11KeyboardImpl::PressKey` in `remoting_me2me_host` uses `XkbLatchLockState(Shift)`
+            // without sending a physical Shift KeyPress when injecting uppercase/symbol TextEvents.
+            let xkb_shift_latched = (x11_state & 0x01) != 0;
+            if !is_modifier && xkb_shift_latched && !shift_held {
+                if let Some(prev_key) = self.synth_shift_key.take() {
+                    let _ = self.keyboard.emit(&[
+                        InputEvent::new(EventType::KEY, prev_key, 0),
+                        InputEvent::new(EventType::KEY, Key::KEY_LEFTSHIFT.code(), 0),
+                    ]);
+                }
+                self.synth_shift_key = Some(evdev_code);
+                let _ = self.keyboard.emit(&[
+                    InputEvent::new(EventType::KEY, Key::KEY_LEFTSHIFT.code(), 1),
+                    InputEvent::new(EventType::KEY, evdev_code, 1),
+                ]);
+                return;
+            }
+            let ev = InputEvent::new(EventType::KEY, evdev_code, 1);
+            let _ = self.keyboard.emit(&[ev]);
+        } else {
+            let ev = InputEvent::new(EventType::KEY, evdev_code, 0);
+            if self.synth_shift_key == Some(evdev_code) {
+                self.synth_shift_key = None;
+                let rel_shift = InputEvent::new(EventType::KEY, Key::KEY_LEFTSHIFT.code(), 0);
+                let _ = self.keyboard.emit(&[ev, rel_shift]);
+            } else {
+                let _ = self.keyboard.emit(&[ev]);
+            }
+        }
     }
 
     fn release_modifiers(&mut self) {
         let mut rel = Vec::new();
+        if self.synth_shift_key.take().is_some() {
+            rel.push(InputEvent::new(EventType::KEY, Key::KEY_LEFTSHIFT.code(), 0));
+        }
         if self.ctrl_l {
             rel.push(InputEvent::new(EventType::KEY, Key::KEY_LEFTCTRL.code(), 0));
             self.ctrl_l = false;
@@ -167,6 +243,14 @@ impl UinputInjector {
         if self.alt_r {
             rel.push(InputEvent::new(EventType::KEY, Key::KEY_RIGHTALT.code(), 0));
             self.alt_r = false;
+        }
+        if self.shift_l {
+            rel.push(InputEvent::new(EventType::KEY, Key::KEY_LEFTSHIFT.code(), 0));
+            self.shift_l = false;
+        }
+        if self.shift_r {
+            rel.push(InputEvent::new(EventType::KEY, Key::KEY_RIGHTSHIFT.code(), 0));
+            self.shift_r = false;
         }
         if !rel.is_empty() {
             let _ = self.keyboard.emit(&rel);
@@ -185,8 +269,8 @@ fn trigger_gamescope_steam_chord(is_qam: bool) {
     };
     let ctrl_x11_key: u8 = 37; // KEY_LEFTCTRL (29) + 8 = 37
 
-    match x11rb::connect(Some(":0")) {
-        Ok((conn, _)) => {
+    match crate::session_detector::connect_x11_display(":0", None) {
+        Some((conn, _)) => {
             let _ = xtest::fake_input(&conn, x11rb::protocol::xproto::KEY_PRESS_EVENT, ctrl_x11_key, 0, 0, 0, 0, 0);
             let _ = xtest::fake_input(&conn, x11rb::protocol::xproto::KEY_PRESS_EVENT, target_x11_key, 0, 0, 0, 0, 0);
             let _ = conn.sync();
@@ -195,8 +279,8 @@ fn trigger_gamescope_steam_chord(is_qam: bool) {
             let _ = xtest::fake_input(&conn, x11rb::protocol::xproto::KEY_RELEASE_EVENT, ctrl_x11_key, 0, 0, 0, 0, 0);
             let _ = conn.sync();
         }
-        Err(e) => {
-            warn!("Failed to connect to Gamescope :0 for Steam chord: {e}");
+        None => {
+            warn!("Failed to connect to Gamescope :0 for Steam chord");
         }
     }
 }
