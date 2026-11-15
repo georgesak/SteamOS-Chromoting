@@ -3,14 +3,16 @@ Description=SteamOS Chrome Remote Desktop Host (Bubblewrap)
 PartOf=steamos-crd.target
 Requires=steamos-crd-xvfb.service steamos-crd-audio.service
 After=steamos-crd-xvfb.service steamos-crd-audio.service
+ConditionPathExistsGlob=%h/.config/chrome-remote-desktop/host#*.json
 
 [Service]
 Type=simple
+UnsetEnvironment=WAYLAND_DISPLAY XAUTHORITY
 Environment=STEAMOS_CRD_DISPLAY=:20
+Environment=GDK_BACKEND=x11
 ExecStart=%h/.local/share/steamos-chromoting/runtime/host-runner.sh
-SuccessExitStatus=0 1
-Restart=on-failure
-RestartSec=5
+Restart=always
+RestartSec=3
 
 [Install]
 WantedBy=steamos-crd.target

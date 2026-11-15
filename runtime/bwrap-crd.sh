@@ -61,6 +61,8 @@ fi
 BWRAP_ARGS+=(
     --bind "$CRD_OPT" /opt/google/chrome-remote-desktop
     --ro-bind "$INSTALL_DIR/runtime/crd-controller-shim.sh" /opt/google/chrome-remote-desktop/chrome-remote-desktop
+    --unsetenv WAYLAND_DISPLAY
+    --setenv GDK_BACKEND x11
     --setenv PATH "$INSTALL_DIR/sysroot/bin:$INSTALL_DIR/bin:$PATH"
     --setenv LD_LIBRARY_PATH "$INSTALL_DIR/sysroot/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 )
