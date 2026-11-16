@@ -6,13 +6,18 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALL_DIR="${STEAMOS_CRD_DIR:-$HOME/.local/share/steamos-chromoting}"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 CONFIG_DIR="$HOME/.config/chrome-remote-desktop"
+APPLICATIONS_DIR="$HOME/.local/share/applications"
+APP_DESKTOP_FILE="$APPLICATIONS_DIR/steamos-chromoting.desktop"
+RELEASE_TARBALL_URL="https://github.com/georgesak/SteamOS-Chromoting/releases/latest/download/steamos-chromoting-linux-x86_64.tar.gz"
 
 usage() {
     cat <<'EOF'
 Usage: steamos-crd <command> [options]
 
 Commands:
-  install                 Install/update rootless CRD runtime & systemd user services
+  install                 Install/update rootless CRD runtime, user services & app menu entry
+  gui-install             Install runtime and launch the interactive GUI setup wizard
+  gui                     Open the SteamOS Chromoting GUI control panel (kdialog/zenity)
   setup [options]         Register host with Google Chrome Remote Desktop
                             --code="4/0A..."   OAuth code from https://remotedesktop.google.com/headless
                             --pin=123456       6+ digit PIN (optional; prompts interactively if omitted)
@@ -22,10 +27,39 @@ Commands:
   restart                 Restart SteamOS-Chromoting services
   status                  Show service, display, session, and registration status
   logs [unit]             Follow logs (all units or xvfb|audio|bridge|host)
+  self-update             Download and install the latest GitHub Release
   desktop                 Switch SteamOS to Desktop Mode
   gamemode                Switch SteamOS back to Gaming Mode (Gamescope)
-  uninstall               Stop services and remove runtime files
+  uninstall [--purge]     Stop services and remove runtime files (--purge also deletes host config)
 EOF
+}
+
+refresh_desktop_menu() {
+    command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPLICATIONS_DIR" >/dev/null 2>&1 || true
+    if command -v kbuildsycoca6 >/dev/null 2>&1; then
+        kbuildsycoca6 >/dev/null 2>&1 || true
+    elif command -v kbuildsycoca5 >/dev/null 2>&1; then
+        kbuildsycoca5 >/dev/null 2>&1 || true
+    fi
+}
+
+install_desktop_entry() {
+    mkdir -p "$APPLICATIONS_DIR"
+    cat > "$APP_DESKTOP_FILE" <<EOF
+[Desktop Entry]
+Type=Application
+Name=SteamOS Chromoting
+GenericName=Chrome Remote Desktop Host
+Comment=Manage Chrome Remote Desktop for SteamOS (Gaming & Desktop Mode)
+Exec="$INSTALL_DIR/bin/steamos-crd" gui
+Icon=preferences-desktop-remote-desktop
+Terminal=false
+Categories=System;Network;RemoteAccess;Utility;
+Keywords=chrome;remote;desktop;crd;chromoting;steamos;
+StartupNotify=false
+EOF
+    chmod +x "$APP_DESKTOP_FILE"
+    refresh_desktop_menu
 }
 
 cmd_install() {
@@ -58,6 +92,8 @@ cmd_install() {
         printf '\nexport PATH="$HOME/.local/share/steamos-chromoting/bin:$PATH"\n' >> "$HOME/.bashrc"
     fi
 
+    install_desktop_entry
+
     "$INSTALL_DIR/runtime/fetch-crd.sh"
 
     # Enable systemd user linger (rootless via polkit) so Xvfb & CRD survive Gaming <-> Desktop switches
@@ -73,8 +109,18 @@ cmd_install() {
 
     echo ""
     echo "[steamos-crd] Installation complete!"
-    echo "Next step: Authorize at https://remotedesktop.google.com/headless and run:"
+    echo "Next step: Run 'steamos-crd gui' (or open 'SteamOS Chromoting' from the KDE Application Menu),"
+    echo "or authorize via CLI at https://remotedesktop.google.com/headless:"
     echo "  steamos-crd setup --code=\"<AUTH_CODE>\" --pin=\"<6_DIGIT_PIN>\""
+}
+
+strip_outer_quotes() {
+    local v="$1"
+    v="${v#\"}"
+    v="${v%\"}"
+    v="${v#\'}"
+    v="${v%\'}"
+    printf '%s' "$v"
 }
 
 cmd_setup() {
@@ -87,19 +133,20 @@ cmd_setup() {
     for arg in "$@"; do
         case "$arg" in
             --code=*)
-                code="${arg#--code=}"
+                code="$(strip_outer_quotes "${arg#--code=}")"
                 ;;
             --pin=*)
-                pin="${arg#--pin=}"
+                pin="$(strip_outer_quotes "${arg#--pin=}")"
                 ;;
             --name=*)
-                local parsed_name="${arg#--name=}"
+                local parsed_name
+                parsed_name="$(strip_outer_quotes "${arg#--name=}")"
                 if [[ -n "$parsed_name" && "$parsed_name" != '$(hostname)' ]]; then
                     host_name="$parsed_name"
                 fi
                 ;;
             --redirect-url=*)
-                redirect_url="${arg#--redirect-url=}"
+                redirect_url="$(strip_outer_quotes "${arg#--redirect-url=}")"
                 ;;
             DISPLAY=*|/opt/google/chrome-remote-desktop/start-host)
                 # Ignore pasted prefix tokens from Google's headless snippet
@@ -140,6 +187,24 @@ cmd_setup() {
     echo "[steamos-crd] Host registered and running! Open https://remotedesktop.google.com/access to connect."
 }
 
+cmd_self_update() {
+    _STEAMOS_UPDATE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/steamos-crd-update.XXXXXX")"
+    trap 'rm -rf "${_STEAMOS_UPDATE_TMP:-}"' EXIT
+
+    echo "[steamos-crd] Downloading latest SteamOS-Chromoting release..."
+    curl -fL --retry 3 -o "$_STEAMOS_UPDATE_TMP/release.tar.gz" "$RELEASE_TARBALL_URL"
+    tar -xzf "$_STEAMOS_UPDATE_TMP/release.tar.gz" -C "$_STEAMOS_UPDATE_TMP"
+    "$_STEAMOS_UPDATE_TMP/steamos-chromoting/cli/steamos-crd" install
+
+    local cfg
+    cfg="$(find "$CONFIG_DIR" -maxdepth 1 -name 'host#*.json' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$cfg" ]]; then
+        echo "[steamos-crd] Restarting active services..."
+        "$INSTALL_DIR/bin/steamos-crd" restart
+    fi
+    echo "[steamos-crd] Update complete!"
+}
+
 cmd_status() {
     echo "=== SteamOS-Chromoting Status ==="
     local cfg
@@ -147,7 +212,7 @@ cmd_status() {
     if [[ -n "$cfg" ]]; then
         echo "Host Config : $cfg (registered)"
     else
-        echo "Host Config : NOT REGISTERED (run 'steamos-crd setup')"
+        echo "Host Config : NOT REGISTERED (run 'steamos-crd setup' or 'steamos-crd gui')"
     fi
     echo "Bridge Bin  : $( [[ -x "$INSTALL_DIR/bin/steamos-crd-bridge" ]] && echo "installed" || echo "not built yet" )"
     echo "uinput ACL  : $( [[ -w /dev/uinput ]] && echo "writable (OK)" || echo "NOT writable" )"
@@ -171,17 +236,53 @@ cmd_logs() {
     esac
 }
 
+cmd_uninstall() {
+    local purge=0
+    for arg in "$@"; do
+        [[ "$arg" == "--purge" ]] && purge=1
+    done
+
+    systemctl --user disable --now steamos-crd.target steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-bridge.service steamos-crd-host.service 2>/dev/null || true
+    rm -f "$SYSTEMD_USER_DIR"/steamos-crd*
+    systemctl --user daemon-reload
+    rm -f "$APP_DESKTOP_FILE"
+    refresh_desktop_menu
+    rm -rf "$INSTALL_DIR" "$HOME/bin/steamos-crd"
+    [[ -w "$HOME/.local/bin" ]] && rm -f "$HOME/.local/bin/steamos-crd" || true
+
+    if [[ "$purge" -eq 1 ]]; then
+        rm -rf "$CONFIG_DIR"
+        echo "[steamos-crd] Uninstalled runtime and removed ~/.config/chrome-remote-desktop credentials."
+    else
+        echo "[steamos-crd] Uninstalled runtime (kept ~/.config/chrome-remote-desktop credentials)."
+    fi
+}
+
 COMMAND="${1:-}"
 shift || true
 
 case "$COMMAND" in
-    install)   cmd_install "$@" ;;
-    setup)     cmd_setup "$@" ;;
-    start)     systemctl --user start steamos-crd.target ;;
-    stop)      systemctl --user stop steamos-crd.target ;;
-    restart)   systemctl --user restart steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-host.service; systemctl --user restart steamos-crd-bridge.service 2>/dev/null || true ;;
-    status)    cmd_status ;;
-    logs)      cmd_logs "$@" ;;
+    install)     cmd_install "$@" ;;
+    gui-install)
+        cmd_install "$@"
+        exec "$INSTALL_DIR/runtime/gui-wizard.sh" install-wizard
+        ;;
+    gui|gui-manage)
+        if [[ -x "$INSTALL_DIR/runtime/gui-wizard.sh" ]]; then
+            exec "$INSTALL_DIR/runtime/gui-wizard.sh" "${1:-manage}"
+        else
+            exec "$REPO_ROOT/runtime/gui-wizard.sh" "${1:-manage}"
+        fi
+        ;;
+    setup)       cmd_setup "$@" ;;
+    self-update|update)
+        cmd_self_update "$@"
+        ;;
+    start)       systemctl --user start steamos-crd.target ;;
+    stop)        systemctl --user stop steamos-crd.target ;;
+    restart)     systemctl --user restart steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-host.service; systemctl --user restart steamos-crd-bridge.service 2>/dev/null || true ;;
+    status)      cmd_status ;;
+    logs)        cmd_logs "$@" ;;
     desktop)
         steamosctl switch-to-desktop-mode
         ;;
@@ -189,12 +290,7 @@ case "$COMMAND" in
         steamosctl switch-to-game-mode
         ;;
     uninstall)
-        systemctl --user disable --now steamos-crd.target steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-bridge.service steamos-crd-host.service 2>/dev/null || true
-        rm -f "$SYSTEMD_USER_DIR"/steamos-crd*
-        systemctl --user daemon-reload
-        rm -rf "$INSTALL_DIR" "$HOME/bin/steamos-crd"
-        [[ -w "$HOME/.local/bin" ]] && rm -f "$HOME/.local/bin/steamos-crd" || true
-        echo "[steamos-crd] Uninstalled runtime (kept ~/.config/chrome-remote-desktop credentials)."
+        cmd_uninstall "$@"
         ;;
     *)
         usage

@@ -16,14 +16,24 @@ A rootless, SteamOS-update-persistent **Chrome Remote Desktop** host that works 
 
 ## Quick Start (on SteamOS)
 
+### Option 1: One-Click Desktop Installer (Recommended)
+
+1. Switch your Steam Deck to **Desktop Mode**.
+2. Download **[`Install-SteamOS-Chromoting.desktop`](https://github.com/georgesak/SteamOS-Chromoting/releases/latest/download/Install-SteamOS-Chromoting.desktop)** (or extract the release archive) and **double-click** it.
+3. Follow the guided setup wizard:
+   - Opens `https://remotedesktop.google.com/headless` in your browser so you can click **Begin → Next → Authorize** and copy the **Debian Linux** command.
+   - Paste the copied command directly into the setup dialog, pick a device name, and choose your **6+ digit PIN**.
+4. Manage, re-pair, view logs, update, or uninstall anytime from the KDE Application Launcher under **SteamOS Chromoting**.
+
+### Option 2: Terminal / CLI
+
 ```bash
-# 1. Install runtime & user services
+# One-line installer (downloads latest release + launches setup wizard):
+curl -fsSL https://github.com/georgesak/SteamOS-Chromoting/releases/latest/download/install.sh | bash
+
+# Or manual CLI steps from a release archive:
 ./cli/steamos-crd install
-
-# 2. Authorize via https://remotedesktop.google.com/headless ("Debian Linux" copy command or --code)
 ./cli/steamos-crd setup --code="4/0A..." --pin=123456
-
-# 3. Check status
 ./cli/steamos-crd status
 ```
 

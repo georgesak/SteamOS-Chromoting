@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install SteamOS Chromoting
+GenericName=Chrome Remote Desktop Installer
+Comment=Install and set up Chrome Remote Desktop for SteamOS (Gaming & Desktop Mode)
+Exec=/usr/bin/bash -c "IFS=''; p=\\${1#file://}; p=\\${p//%%20/ }; [[ \\$p == */* ]] && d=\\${p%%/*} || d=.; if [[ -f \\$d/cli/steamos-crd && ( -f \\$d/dist/steamos-crd-bridge || -f \\$d/target/release/steamos-crd-bridge ) ]]; then exec /usr/bin/bash \\$d/cli/steamos-crd gui-install; fi; s=\\$(mktemp); trap 'rm -f \\$s' EXIT; if ! curl -fsSL https://github.com/georgesak/SteamOS-Chromoting/releases/latest/download/install.sh -o \\$s && ! curl -fsSL https://raw.githubusercontent.com/georgesak/SteamOS-Chromoting/main/scripts/install.sh -o \\$s; then echo 'ERROR: Failed to download SteamOS-Chromoting installer from GitHub.'; read -r -p 'Press Enter to close...' _; exit 1; fi; /usr/bin/bash \\$s" -- %k
+Icon=preferences-desktop-remote-desktop
+Terminal=true
+Categories=System;Network;RemoteAccess;Utility;
+StartupNotify=false
