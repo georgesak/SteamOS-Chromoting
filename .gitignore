@@ -1,6 +1,12 @@
 /target/
 /dist/
+node_modules/
+package-lock.json
+decky-plugin/dist/
+__pycache__/
+*.pyc
 *.tar.gz
 *.deb
+*.zip
 .DS_Store
 Thumbs.db

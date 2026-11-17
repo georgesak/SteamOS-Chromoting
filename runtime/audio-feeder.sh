@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SETTINGS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/steamos-chromoting/settings.env"
+if [[ -f "$SETTINGS_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$SETTINGS_FILE"
+    set +a
+fi
+
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/steamos-crd"
 AUDIO_FIFO="$RUNTIME_DIR/audio.fifo"
 
@@ -8,6 +16,13 @@ mkdir -p "$RUNTIME_DIR"
 if [[ ! -p "$AUDIO_FIFO" ]]; then
     rm -f "$AUDIO_FIFO"
     mkfifo -m 0600 "$AUDIO_FIFO"
+fi
+
+if [[ "${STEAMOS_CRD_AUDIO_ENABLED:-1}" == "0" ]]; then
+    echo "[steamos-crd-audio] Audio streaming disabled via settings; idling."
+    while true; do
+        sleep 3600
+    done
 fi
 
 echo "[steamos-crd-audio] Audio FIFO ready at $AUDIO_FIFO (idle until CRD opens pipe)"

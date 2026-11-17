@@ -10,6 +10,7 @@ Type=simple
 UnsetEnvironment=WAYLAND_DISPLAY XAUTHORITY DISPLAY
 Environment=STEAMOS_CRD_DISPLAY=:20
 Environment=RUST_LOG=info
+EnvironmentFile=-%h/.config/steamos-chromoting/settings.env
 ExecStart=%h/.local/share/steamos-chromoting/bin/steamos-crd-bridge
 Restart=always
 RestartSec=2

@@ -63,17 +63,82 @@ fn install_signal_handlers() {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BridgeSettings {
+    max_fps: u32,
+    clipboard_sync: bool,
+    gaming_chords: bool,
+    composite_force: bool,
+}
+
+fn load_settings_env_defaults() {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let path = std::path::Path::new(&home).join(".config/steamos-chromoting/settings.env");
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").map(str::trim).unwrap_or(line);
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let key = k.trim();
+        if key.is_empty() || std::env::var_os(key).is_some() {
+            continue;
+        }
+        let val = v
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'');
+        std::env::set_var(key, val);
+    }
+}
+
+fn env_bool(name: &str, default: bool) -> bool {
+    match std::env::var(name) {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        ),
+        Err(_) => default,
+    }
+}
+
+impl BridgeSettings {
+    fn from_env() -> Self {
+        let max_fps = std::env::var("STEAMOS_CRD_MAX_FPS")
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(60)
+            .clamp(5, 120);
+        Self {
+            max_fps,
+            clipboard_sync: env_bool("STEAMOS_CRD_CLIPBOARD_SYNC", true),
+            gaming_chords: env_bool("STEAMOS_CRD_GAMING_CHORDS", true),
+            composite_force: env_bool("STEAMOS_CRD_COMPOSITE_FORCE", true),
+        }
+    }
+}
+
 fn start_capture_for_mode(
     mode: &SessionMode,
+    settings: BridgeSettings,
     frame_slot: &Arc<LatestFrameSlot>,
     active_client_flag: &Arc<AtomicBool>,
     presenter: &mut XvfbPresenter,
 ) -> ActiveCapture {
     match mode {
         SessionMode::GamingMode => {
-            set_gamescope_composite_force(true);
+            set_gamescope_composite_force(settings.composite_force);
             ActiveCapture::GamingPipeWire(PipeWireCaptureHandle::spawn_target_object(
                 "gamescope",
+                settings.max_fps,
                 Arc::clone(frame_slot),
             ))
         }
@@ -87,6 +152,7 @@ fn start_capture_for_mode(
                 xauthority.clone(),
                 Arc::clone(frame_slot),
                 Arc::clone(active_client_flag),
+                settings.max_fps,
             ))
         }
         SessionMode::DesktopWayland { dbus_addr } => {
@@ -110,6 +176,8 @@ fn start_capture_for_mode(
 }
 
 fn main() -> Result<()> {
+    load_settings_env_defaults();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -121,12 +189,23 @@ fn main() -> Result<()> {
 
     let xvfb_display =
         std::env::var("STEAMOS_CRD_DISPLAY").unwrap_or_else(|_| ":20".to_string());
+    let settings = BridgeSettings::from_env();
 
-    info!("Starting steamos-crd-bridge targeting Xvfb {xvfb_display}");
+    info!(
+        "Starting steamos-crd-bridge targeting Xvfb {xvfb_display} (max_fps={}, clipboard={}, gaming_chords={}, composite_force={})",
+        settings.max_fps,
+        settings.clipboard_sync,
+        settings.gaming_chords,
+        settings.composite_force
+    );
 
     let mut presenter = XvfbPresenter::connect(&xvfb_display)?;
     let mut uinput = UinputInjector::new()?;
-    let mut clipboard = ClipboardBridge::new(&xvfb_display);
+    let mut clipboard = if settings.clipboard_sync {
+        ClipboardBridge::new(&xvfb_display)
+    } else {
+        None
+    };
 
     presenter.present_splash("STEAMOS CHROMOTING", "READY - WAITING FOR SESSION")?;
 
@@ -136,6 +215,8 @@ fn main() -> Result<()> {
     let mut current_mode: Option<SessionMode> = None;
     let mut capture = ActiveCapture::None;
     let mut last_presented_seq: u64 = 0;
+    let min_frame_interval = Duration::from_micros(1_000_000 / (settings.max_fps as u64));
+    let mut last_blit_at = Instant::now() - Duration::from_secs(1);
 
     let mut last_probe = Instant::now() - Duration::from_secs(10);
     let mut last_input_at = Instant::now() - Duration::from_secs(300);
@@ -151,7 +232,11 @@ fn main() -> Result<()> {
         }
 
         // 2. Drain X11 input events on Xvfb -> /dev/uinput (with pre-paste clipboard sync)
-        if presenter.pump_events(&mut uinput, clipboard.as_mut(), in_gaming_mode)? {
+        if presenter.pump_events(
+            &mut uinput,
+            clipboard.as_mut(),
+            in_gaming_mode && settings.gaming_chords,
+        )? {
             last_input_at = now;
         }
 
@@ -180,7 +265,7 @@ fn main() -> Result<()> {
                 current_mode = Some(detected_mode);
             }
 
-            if clipboard.is_none() {
+            if settings.clipboard_sync && clipboard.is_none() {
                 clipboard = ClipboardBridge::new(&xvfb_display);
             }
             if let Some(ref mut clip) = clipboard {
@@ -205,6 +290,7 @@ fn main() -> Result<()> {
                                     let pw = PipeWireCaptureHandle::spawn_portal_node(
                                         owned_dup,
                                         node_id,
+                                        settings.max_fps,
                                         Arc::clone(&frame_slot),
                                     );
                                     capture = ActiveCapture::DesktopWayland {
@@ -249,6 +335,7 @@ fn main() -> Result<()> {
                     last_capture_retry = now;
                     capture = start_capture_for_mode(
                         active_mode,
+                        settings,
                         &frame_slot,
                         &active_client_flag,
                         &mut presenter,
@@ -257,10 +344,11 @@ fn main() -> Result<()> {
             }
         }
 
-        // 4. Blit latest captured frame onto Xvfb if updated
+        // 4. Blit latest captured frame onto Xvfb if updated and frame interval elapsed
         let seq = frame_slot.sequence();
-        if seq != last_presented_seq {
+        if seq != last_presented_seq && now.duration_since(last_blit_at) >= min_frame_interval {
             last_presented_seq = seq;
+            last_blit_at = now;
             let mut blit_res = Ok(());
             frame_slot.with_latest(|fb| {
                 blit_res = presenter.present_frame(fb);

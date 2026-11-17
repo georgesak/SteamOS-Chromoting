@@ -25,7 +25,18 @@ A rootless, SteamOS-update-persistent **Chrome Remote Desktop** host that works 
    - Paste the copied command directly into the setup dialog, pick a device name, and choose your **6+ digit PIN**.
 4. Manage, re-pair, view logs, update, or uninstall anytime from the KDE Application Launcher under **SteamOS Chromoting**.
 
-### Option 2: Terminal / CLI
+### Option 2: Decky Loader Plugin (Gaming Mode)
+
+1. Install **[Decky Loader](https://decky.xyz)** if you haven't already, then enable **Developer Mode** in Decky Settings.
+2. Under **Developer → Install Plugin from URL** (or **Install Plugin from ZIP File**), install:
+   `https://github.com/georgesak/SteamOS-Chromoting/releases/latest/download/steamos-chromoting-decky.zip`
+   *(or run `./scripts/install-decky-plugin.sh` from a local clone).*
+3. Open the **Quick Access Menu (`...`) → SteamOS Chromoting**:
+   - **One-Click Server Install**: If the server isn't installed yet, click **Install Server** directly inside Decky to download and set up the rootless runtime automatically.
+   - **Account Pairing & PIN**: Open Google's Headless Auth page, paste the authorization snippet from your clipboard, set or change your **6+ digit PIN**, and rename your Steam Deck anytime.
+   - **Live Settings**: Configure **Start on Boot**, **Display Resolution** (`1280×800` native, `1080p`, `1200p`, `1440p`), **Max Frame Rate** (`15`–`60 FPS`), **Remote Audio**, **Clipboard Sync**, **Gaming Mode Shortcuts**, **Steam Overlay Capture**, and view live service logs.
+
+### Option 3: Terminal / CLI
 
 ```bash
 # One-line installer (downloads latest release + launches setup wizard):

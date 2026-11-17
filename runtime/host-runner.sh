@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SETTINGS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/steamos-chromoting/settings.env"
+if [[ -f "$SETTINGS_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$SETTINGS_FILE"
+    set +a
+fi
+
 INSTALL_DIR="${STEAMOS_CRD_DIR:-$HOME/.local/share/steamos-chromoting}"
 CRD_OPT="$INSTALL_DIR/opt/google/chrome-remote-desktop"
 CONFIG_DIR="$HOME/.config/chrome-remote-desktop"
@@ -50,7 +58,11 @@ export GDK_BACKEND=x11
 export QT_QPA_PLATFORM=xcb
 export OZONE_PLATFORM=x11
 export CHROME_REMOTE_DESKTOP_SESSION=1
-export CHROME_REMOTE_DESKTOP_AUDIO_PIPE="$AUDIO_FIFO"
+if [[ "${STEAMOS_CRD_AUDIO_ENABLED:-1}" == "0" ]]; then
+    unset CHROME_REMOTE_DESKTOP_AUDIO_PIPE
+else
+    export CHROME_REMOTE_DESKTOP_AUDIO_PIPE="$AUDIO_FIFO"
+fi
 
 echo "[steamos-crd-host] Launching $(basename "$HOST_BIN") on DISPLAY=$DISPLAY using $(basename "$HOST_CONFIG")..."
 exec "$INSTALL_DIR/runtime/bwrap-crd.sh" \

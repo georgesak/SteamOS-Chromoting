@@ -24,6 +24,7 @@ impl X11CaptureHandle {
         xauthority: Option<String>,
         slot: Arc<LatestFrameSlot>,
         active_client: Arc<AtomicBool>,
+        max_fps: u32,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_clone = Arc::clone(&stop);
@@ -31,7 +32,7 @@ impl X11CaptureHandle {
         let join = thread::Builder::new()
             .name(format!("x11-cap-{disp}"))
             .spawn(move || {
-                if let Err(e) = run_x11_capture(&disp, xauthority.as_deref(), &slot, &stop_clone, &active_client) {
+                if let Err(e) = run_x11_capture(&disp, xauthority.as_deref(), &slot, &stop_clone, &active_client, max_fps) {
                     if !stop_clone.load(Ordering::Relaxed) {
                         warn!("X11 desktop capture on {disp} ended: {e:#}");
                     }
@@ -110,6 +111,7 @@ fn run_x11_capture(
     slot: &LatestFrameSlot,
     stop: &AtomicBool,
     active_client: &AtomicBool,
+    max_fps: u32,
 ) -> Result<()> {
     let (conn, screen_num) = crate::session_detector::connect_x11_display(disp, xauthority)
         .ok_or_else(|| anyhow::anyhow!("Failed to connect to Desktop X11 display {disp}"))?;
@@ -125,13 +127,16 @@ fn run_x11_capture(
     let mut cur_h = conn.setup().roots[screen_num].height_in_pixels as u32;
     let mut shm = ShmSegment::allocate(&conn, (cur_w as usize) * (cur_h as usize) * 4)?;
 
-    info!("Started X11 Desktop Mode capture on {disp} ({cur_w}x{cur_h}, cursor={has_xfixes})");
+    let clamped_fps = max_fps.clamp(5, 120);
+    let active_interval = Duration::from_micros(1_000_000 / (clamped_fps as u64));
+
+    info!("Started X11 Desktop Mode capture on {disp} ({cur_w}x{cur_h}, cursor={has_xfixes}, max_fps={clamped_fps})");
 
     let mut frame_scratch = vec![0u8; shm.len];
 
     while !stop.load(Ordering::Relaxed) {
         let target_interval = if active_client.load(Ordering::Relaxed) {
-            Duration::from_millis(16) // ~60 FPS
+            active_interval
         } else {
             Duration::from_millis(500) // 2 FPS idle thumbnail heartbeat
         };

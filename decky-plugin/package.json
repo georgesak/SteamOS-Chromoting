@@ -1,21 +1,20 @@
 {
   "name": "steamos-chromoting-decky",
-  "version": "0.3.0",
+  "version": "0.4.0",
+  "description": "Install, configure, and control Chrome Remote Desktop across SteamOS Gaming Mode and Desktop Mode.",
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "rollup -c"
+    "build": "rollup -c",
+    "watch": "rollup -c -w"
   },
   "dependencies": {
-    "@decky/api": "^1.1.2",
-    "@decky/ui": "^4.4.0"
+    "@decky/api": "^1.1.3",
+    "@decky/ui": "^4.16.5"
   },
   "devDependencies": {
-    "@rollup/plugin-commonjs": "^25.0.7",
-    "@rollup/plugin-json": "^6.1.0",
-    "@rollup/plugin-node-resolve": "^15.2.3",
-    "@rollup/plugin-replace": "^5.0.5",
-    "@rollup/plugin-typescript": "^11.1.6",
+    "@decky/rollup": "^1.0.2",
+    "@types/react": "18.2.0",
     "react": "^18.2.0",
     "rollup": "^4.13.0",
     "tslib": "^2.6.2",

@@ -6,8 +6,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALL_DIR="${STEAMOS_CRD_DIR:-$HOME/.local/share/steamos-chromoting}"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 CONFIG_DIR="$HOME/.config/chrome-remote-desktop"
+SETTINGS_DIR="$HOME/.config/steamos-chromoting"
 APPLICATIONS_DIR="$HOME/.local/share/applications"
 APP_DESKTOP_FILE="$APPLICATIONS_DIR/steamos-chromoting.desktop"
+STEAMOS_CRD_VERSION="0.4.0"
 RELEASE_TARBALL_URL="https://github.com/georgesak/SteamOS-Chromoting/releases/latest/download/steamos-chromoting-linux-x86_64.tar.gz"
 
 usage() {
@@ -82,6 +84,7 @@ cmd_install() {
 
     cp -f "${BASH_SOURCE[0]}" "$INSTALL_DIR/bin/steamos-crd"
     chmod +x "$INSTALL_DIR/bin/steamos-crd"
+    printf '%s\n' "$STEAMOS_CRD_VERSION" > "$INSTALL_DIR/VERSION"
     if [[ -w "$HOME/.local/bin" ]]; then
         ln -sf "$INSTALL_DIR/bin/steamos-crd" "$HOME/.local/bin/steamos-crd"
     else
@@ -243,7 +246,7 @@ cmd_uninstall() {
     done
 
     systemctl --user disable --now steamos-crd.target steamos-crd-xvfb.service steamos-crd-audio.service steamos-crd-bridge.service steamos-crd-host.service 2>/dev/null || true
-    rm -f "$SYSTEMD_USER_DIR"/steamos-crd*
+    rm -rf "$SYSTEMD_USER_DIR"/steamos-crd*
     systemctl --user daemon-reload
     rm -f "$APP_DESKTOP_FILE"
     refresh_desktop_menu
@@ -251,10 +254,10 @@ cmd_uninstall() {
     [[ -w "$HOME/.local/bin" ]] && rm -f "$HOME/.local/bin/steamos-crd" || true
 
     if [[ "$purge" -eq 1 ]]; then
-        rm -rf "$CONFIG_DIR"
-        echo "[steamos-crd] Uninstalled runtime and removed ~/.config/chrome-remote-desktop credentials."
+        rm -rf "$CONFIG_DIR" "$SETTINGS_DIR"
+        echo "[steamos-crd] Uninstalled runtime and removed ~/.config/chrome-remote-desktop and settings."
     else
-        echo "[steamos-crd] Uninstalled runtime (kept ~/.config/chrome-remote-desktop credentials)."
+        echo "[steamos-crd] Uninstalled runtime (kept ~/.config/chrome-remote-desktop credentials and settings)."
     fi
 }
 

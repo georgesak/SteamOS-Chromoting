@@ -5,7 +5,7 @@
   "api_version": 1,
   "publish": {
     "tags": ["remote-desktop", "chromoting", "streaming", "utility"],
-    "description": "Control Chrome Remote Desktop across SteamOS Gaming Mode and Desktop Mode.",
+    "description": "Install, configure, and control Chrome Remote Desktop across SteamOS Gaming Mode and Desktop Mode.",
     "image": ""
   }
 }

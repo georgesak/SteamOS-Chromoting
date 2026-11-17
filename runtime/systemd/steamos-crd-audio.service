@@ -5,6 +5,7 @@ Before=steamos-crd-host.service
 
 [Service]
 Type=simple
+EnvironmentFile=-%h/.config/steamos-chromoting/settings.env
 ExecStart=%h/.local/share/steamos-chromoting/runtime/audio-feeder.sh
 Restart=always
 RestartSec=2

@@ -23,6 +23,7 @@ extern "C" {
         portal_fd: c_int,
         target_node_id: u32,
         target_object: *const c_char,
+        max_fps: u32,
         stop_flag: *const u8,
         on_frame: PwFrameCb,
         userdata: *mut c_void,
@@ -52,7 +53,11 @@ pub struct PipeWireCaptureHandle {
 }
 
 impl PipeWireCaptureHandle {
-    pub fn spawn_target_object(target_object: &str, slot: Arc<LatestFrameSlot>) -> Self {
+    pub fn spawn_target_object(
+        target_object: &str,
+        max_fps: u32,
+        slot: Arc<LatestFrameSlot>,
+    ) -> Self {
         let stop_flag = Arc::new(AtomicU8::new(0));
         let stop_clone = Arc::clone(&stop_flag);
         let target = CString::new(target_object).expect("valid CString target_object");
@@ -61,7 +66,7 @@ impl PipeWireCaptureHandle {
         let join = thread::Builder::new()
             .name(format!("pw-cap-{label}"))
             .spawn(move || {
-                info!("Starting PipeWire capture for target.object='{label}'");
+                info!("Starting PipeWire capture for target.object='{label}' (max_fps={max_fps})");
                 let stop_ptr = stop_clone.as_ptr() as *const u8;
                 let userdata = Arc::as_ptr(&slot) as *mut c_void;
                 let rc = unsafe {
@@ -69,6 +74,7 @@ impl PipeWireCaptureHandle {
                         -1,
                         0,
                         target.as_ptr(),
+                        max_fps,
                         stop_ptr,
                         frame_trampoline,
                         userdata,
@@ -92,6 +98,7 @@ impl PipeWireCaptureHandle {
     pub fn spawn_portal_node(
         portal_fd: std::os::fd::OwnedFd,
         node_id: u32,
+        max_fps: u32,
         slot: Arc<LatestFrameSlot>,
     ) -> Self {
         use std::os::fd::AsRawFd;
@@ -103,7 +110,7 @@ impl PipeWireCaptureHandle {
             .name(format!("pw-portal-{node_id}"))
             .spawn(move || {
                 let raw_fd: RawFd = portal_fd.as_raw_fd();
-                info!("Starting PipeWire portal capture on node_id={node_id} (fd={raw_fd})");
+                info!("Starting PipeWire portal capture on node_id={node_id} (fd={raw_fd}, max_fps={max_fps})");
                 let stop_ptr = stop_clone.as_ptr() as *const u8;
                 let userdata = Arc::as_ptr(&slot) as *mut c_void;
                 let rc = unsafe {
@@ -111,6 +118,7 @@ impl PipeWireCaptureHandle {
                         raw_fd,
                         node_id,
                         std::ptr::null(),
+                        max_fps,
                         stop_ptr,
                         frame_trampoline,
                         userdata,

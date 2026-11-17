@@ -194,11 +194,13 @@ int steamos_pw_capture_run(
     int portal_fd,
     uint32_t target_node_id,
     const char *target_object,
+    uint32_t max_fps,
     const volatile uint8_t *stop_flag,
     pw_frame_cb_t on_frame,
     void *userdata
 ) {
     pw_init(NULL, NULL);
+    uint32_t target_fps = (max_fps >= 5 && max_fps <= 120) ? max_fps : 60;
 
     struct capture_ctx ctx;
     memset(&ctx, 0, sizeof(ctx));
@@ -288,9 +290,9 @@ int steamos_pw_capture_run(
             &SPA_RECTANGLE(7680, 4320)
         ),
         SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_RANGE_Fraction(
-            &SPA_FRACTION(60, 1),
+            &SPA_FRACTION(target_fps, 1),
             &SPA_FRACTION(0, 1),
-            &SPA_FRACTION(120, 1)
+            &SPA_FRACTION(target_fps, 1)
         )
     );
 

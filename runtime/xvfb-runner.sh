@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SETTINGS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/steamos-chromoting/settings.env"
+if [[ -f "$SETTINGS_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$SETTINGS_FILE"
+    set +a
+fi
+
 INSTALL_DIR="${STEAMOS_CRD_DIR:-$HOME/.local/share/steamos-chromoting}"
 CRD_DISPLAY="${STEAMOS_CRD_DISPLAY:-:20}"
 CRD_RES="${STEAMOS_CRD_RESOLUTION:-1920x1080x24}"
